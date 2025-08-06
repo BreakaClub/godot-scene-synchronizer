@@ -1,27 +1,22 @@
 #!/usr/bin/env python
 
+use_instrumentation = str(ARGUMENTS.pop("instrumentation", "false")).lower() in ["true", "1", "yes"]
+instrumentation_threshold = int(ARGUMENTS.pop("instrumentation_threshold", 0))
+
 target_path = ARGUMENTS.pop("target_path", "demo/addons/godot-scene-synchronizer/bin/")
 target_name = ARGUMENTS.pop("target_name", "libscenesynchronizer")
 
 env = SConscript("godot-cpp/SConstruct")
 
-env_vars = Variables()
-env_vars.Update(env)
-Help(env_vars.GenerateHelpText(env))
+if use_instrumentation:
+    env.Append(CPPDEFINES=["INSTRUMENTATION_ENABLED"])
+    env.Append(CPPDEFINES=[("INSTRUMENTATION_THRESHOLD_MS", instrumentation_threshold)])
+    print(f"Building with instrumentation (Threshold MS: {instrumentation_threshold})")
 
 target = "{}{}".format(
     target_path, target_name
 )
 
-# For reference:
-# - CCFLAGS are compilation flags shared between C and C++
-# - CFLAGS are for C-specific compilation flags
-# - CXXFLAGS are for C++-specific compilation flags
-# - CPPFLAGS are for pre-processor flags
-# - CPPDEFINES are for pre-processor defines
-# - LINKFLAGS are for linking flags
-
-# tweak this if you want to use different folders, or more folders, to store your source code in.
 env.Append(CPPPATH=["src/"])
 sources = Glob("src/*.cpp")
 

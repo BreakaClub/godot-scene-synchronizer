@@ -1,4 +1,5 @@
 #include "node_serializer.h"
+#include "instrumentation.h"
 
 #include <godot_cpp/classes/json.hpp>
 #include <godot_cpp/classes/marshalls.hpp>
@@ -112,44 +113,62 @@ void NodeSerializer::register_serializable_class(const Variant &p_script_or_path
 }
 
 Variant NodeSerializer::serialize_to_json_structure(const Variant &p_value, const Dictionary &p_options) {
+	INSTRUMENT_FUNCTION_START("serialize_to_json_structure");
 	SerializationContext context;
 	context.serialize_value = &_json_serialize_value;
 	_apply_serialization_context_options(context, p_options);
-	return _json_serialize_value(p_value, context);
+	Variant result = _json_serialize_value(p_value, context);
+	INSTRUMENT_FUNCTION_END();
+	return result;
 }
 
 String NodeSerializer::serialize_to_json(const Variant &p_value, const String &p_indent, bool p_sort_keys, bool p_full_precision, const Dictionary &p_options) {
-	return JSON::stringify(serialize_to_json_structure(p_value, p_options), p_indent, p_sort_keys, p_full_precision);
+	INSTRUMENT_FUNCTION_START("serialize_to_json");
+	String result = JSON::stringify(serialize_to_json_structure(p_value, p_options), p_indent, p_sort_keys, p_full_precision);
+	INSTRUMENT_FUNCTION_END();
+	return result;
 }
 
 Variant NodeSerializer::deserialize_from_json_structure(const Variant &p_value, const Dictionary &p_options) {
+	INSTRUMENT_FUNCTION_START("deserialize_from_json_structure");
 	DeserializationContext context;
 	context.deserialize_value = &_json_deserialize_value;
 	_apply_deserialization_context_options(context, p_options);
-	return context.deserialize_value(p_value, context);
+	Variant result = context.deserialize_value(p_value, context);
+	INSTRUMENT_FUNCTION_END();
+	return result;
 }
 
 Variant NodeSerializer::deserialize_from_json(const String &p_json_string, const Dictionary &p_options) {
+	INSTRUMENT_FUNCTION_START("deserialize_from_json");
 	Ref<JSON> json;
 	json.instantiate();
 	Error err = json->parse(p_json_string);
 	ERR_FAIL_COND_V_MSG(err != OK, Variant(), "Failed to parse JSON string: " + json->get_error_message());
-	return deserialize_from_json_structure(json->get_data(), p_options);
+	Variant result = deserialize_from_json_structure(json->get_data(), p_options);
+	INSTRUMENT_FUNCTION_END();
+	return result;
 }
 
 PackedByteArray NodeSerializer::serialize_to_binary(const Variant &p_value, const Dictionary &p_options) {
+	INSTRUMENT_FUNCTION_START("serialize_to_binary");
 	SerializationContext context;
 	context.serialize_value = &_serialize_recursively;
 	_apply_serialization_context_options(context, p_options);
-	return UtilityFunctions::var_to_bytes(_serialize_recursively(p_value, context));
+	PackedByteArray result = UtilityFunctions::var_to_bytes(_serialize_recursively(p_value, context));
+	INSTRUMENT_FUNCTION_END();
+	return result;
 }
 
 Variant NodeSerializer::deserialize_from_binary(const PackedByteArray &p_bytes, const Dictionary &p_options) {
+	INSTRUMENT_FUNCTION_START("deserialize_from_binary");
 	DeserializationContext context;
 	context.deserialize_value = &_deserialize_recursively;
 	_apply_deserialization_context_options(context, p_options);
 	Variant raw_value = UtilityFunctions::bytes_to_var(p_bytes);
-	return context.deserialize_value(raw_value, context);
+	Variant result = context.deserialize_value(raw_value, context);
+	INSTRUMENT_FUNCTION_END();
+	return result;
 }
 
 String NodeSerializer::_get_object_registration_name(Object *p_object) {

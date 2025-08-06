@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 use_instrumentation = str(ARGUMENTS.pop("instrumentation", "false")).lower() in ["true", "1", "yes"]
-instrumentation_threshold = int(ARGUMENTS.pop("instrumentation_threshold", 0))
+instrumentation_threshold = float(ARGUMENTS.pop("instrumentation_threshold", 0))
 
 target_path = ARGUMENTS.pop("target_path", "demo/addons/godot-scene-synchronizer/bin/")
 target_name = ARGUMENTS.pop("target_name", "libscenesynchronizer")

@@ -319,6 +319,7 @@ Variant NodeSerializer::_deserialize_recursively(const Variant &p_value, Deseria
 
 Variant NodeSerializer::_json_serialize_value(const Variant &p_value, SerializationContext &p_context) {
 	Variant serialized_value = _serialize_recursively(p_value, p_context);
+	INSTRUMENT_FUNCTION_START_WITH_SERIALIZATION_CONTEXT("_json_serialize_value", serialized_value, p_context);
 
 	switch (serialized_value.get_type()) {
 		case Variant::BOOL:
@@ -328,11 +329,13 @@ Variant NodeSerializer::_json_serialize_value(const Variant &p_value, Serializat
 		case Variant::NIL:
 		case Variant::DICTIONARY:
 		case Variant::ARRAY:
+			INSTRUMENT_FUNCTION_END();
 			return serialized_value;
 		case Variant::PACKED_BYTE_ARRAY: {
 			Dictionary packed_representation;
 			packed_representation[*FIELD_TYPE] = *TYPE_NAME_PACKED_BYTE_ARRAY;
 			packed_representation[*FIELD_DATA] = Marshalls::get_singleton()->raw_to_base64(serialized_value);
+			INSTRUMENT_FUNCTION_END();
 			return packed_representation;
 		}
 		case Variant::OBJECT: {
@@ -342,12 +345,14 @@ Variant NodeSerializer::_json_serialize_value(const Variant &p_value, Serializat
 			} else {
 				ERR_PRINT("Unregistered Object cannot be serialized. Register it first.");
 			}
+			INSTRUMENT_FUNCTION_END();
 			return Variant();
 		}
 		default: {
 			Dictionary native_representation;
 			native_representation[*FIELD_TYPE] = *TYPE_NAME_NATIVE;
 			native_representation[*FIELD_DATA] = JSON::from_native(serialized_value);
+			INSTRUMENT_FUNCTION_END();
 			return native_representation;
 		}
 	}

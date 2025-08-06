@@ -1,0 +1,32 @@
+[configuration]
+
+entry_symbol = "scene_synchronizer_library_init"
+compatibility_minimum = "4.4"
+
+[libraries]
+
+macos.debug = "res://addons/godot-scene-synchronizer/bin/libscenesynchronizer.macos.template_debug.framework"
+macos.release = "res://addons/godot-scene-synchronizer/bin/libscenesynchronizer.macos.template_release.framework"
+windows.debug.x86_64 = "res://addons/godot-scene-synchronizer/bin/libscenesynchronizer.windows.template_debug.x86_64.dll"
+windows.release.x86_64 = "res://addons/godot-scene-synchronizer/bin/libscenesynchronizer.windows.template_release.x86_64.dll"
+linux.debug.x86_64 = "res://addons/godot-scene-synchronizer/bin/libscenesynchronizer.linux.template_debug.x86_64.so"
+linux.release.x86_64 = "res://addons/godot-scene-synchronizer/bin/libscenesynchronizer.linux.template_release.x86_64.so"
+android.debug.arm64 = "res://addons/godot-scene-synchronizer/bin/libscenesynchronizer.android.template_debug.arm64.so"
+android.release.arm64 = "res://addons/godot-scene-synchronizer/bin/libscenesynchronizer.android.template_release.arm64.so"
+android.debug.x86_64 = "res://addons/godot-scene-synchronizer/bin/libscenesynchronizer.android.template_debug.x86_64.so"
+android.release.x86_64 = "res://addons/godot-scene-synchronizer/bin/libscenesynchronizer.android.template_release.x86_64.so"
+ios.debug = "res://addons/godot-scene-synchronizer/bin/libscenesynchronizer.ios.template_debug.xcframework"
+ios.release = "res://addons/godot-scene-synchronizer/bin/libscenesynchronizer.ios.template_release.xcframework"
+web.debug.threads.wasm32 = "res://addons/godot-scene-synchronizer/bin/libscenesynchronizer.web.template_debug.wasm32.wasm"
+web.release.threads.wasm32 = "res://addons/godot-scene-synchronizer/bin/libscenesynchronizer.web.template_release.wasm32.wasm"
+web.debug.wasm32 = "res://addons/godot-scene-synchronizer/bin/libscenesynchronizer.web.template_debug.wasm32.nothreads.wasm"
+web.release.wasm32 = "res://addons/godot-scene-synchronizer/bin/libscenesynchronizer.web.template_release.wasm32.nothreads.wasm"
+
+[dependencies]
+
+ios.debug = {
+    "res://addons/godot-scene-synchronizer/bin/libgodot-cpp.ios.template_debug.xcframework": ""
+}
+ios.release = {
+    "res://addons/godot-scene-synchronizer/bin/libgodot-cpp.ios.template_release.xcframework": ""
+}

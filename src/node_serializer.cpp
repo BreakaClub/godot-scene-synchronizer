@@ -26,6 +26,7 @@ StringName *NodeSerializer::FIELD_VALUE_TYPE = nullptr;
 StringName *NodeSerializer::FIELD_VALUE_CLASS_NAME = nullptr;
 StringName *NodeSerializer::PROPERTY_SCRIPT = nullptr;
 StringName *NodeSerializer::PROPERTY_RESOURCE_PATH = nullptr;
+StringName *NodeSerializer::METHOD_SERIALIZE = nullptr;
 
 void NodeSerializer::initialize() {
 	FIELD_CHILDREN = new StringName("._children");
@@ -43,6 +44,7 @@ void NodeSerializer::initialize() {
 	FIELD_VALUE_CLASS_NAME = new StringName("valueClassName");
 	PROPERTY_SCRIPT = new StringName("script");
 	PROPERTY_RESOURCE_PATH = new StringName("resource_path");
+	METHOD_SERIALIZE = new StringName("_serialize");
 }
 
 void NodeSerializer::cleanup() {
@@ -61,6 +63,7 @@ void NodeSerializer::cleanup() {
 	delete FIELD_VALUE_CLASS_NAME;
 	delete PROPERTY_SCRIPT;
 	delete PROPERTY_RESOURCE_PATH;
+	delete METHOD_SERIALIZE;
 
 	for (const KeyValue<String, ObjectRegistration *> &E : _script_registry) {
 		memdelete(E.value);
@@ -74,7 +77,9 @@ void NodeSerializer::_bind_methods() {
 	ClassDB::bind_static_method("NodeSerializer", D_METHOD("serialize_to_json", "value", "indent", "sort_keys", "full_precision", "options"), &NodeSerializer::serialize_to_json, DEFVAL(""), DEFVAL(false), DEFVAL(false), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("NodeSerializer", D_METHOD("deserialize_from_json_structure", "json_string", "options"), &NodeSerializer::deserialize_from_json_structure, DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("NodeSerializer", D_METHOD("deserialize_from_json", "json_string", "options"), &NodeSerializer::deserialize_from_json, DEFVAL(Dictionary()));
+	ClassDB::bind_static_method("NodeSerializer", D_METHOD("serialize_to_binary_structure", "value", "options"), &NodeSerializer::serialize_to_binary_structure, DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("NodeSerializer", D_METHOD("serialize_to_binary", "value", "options"), &NodeSerializer::serialize_to_binary, DEFVAL(Dictionary()));
+	ClassDB::bind_static_method("NodeSerializer", D_METHOD("deserialize_from_binary_structure", "value", "options"), &NodeSerializer::deserialize_from_binary_structure, DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("NodeSerializer", D_METHOD("deserialize_from_binary", "bytes", "options"), &NodeSerializer::deserialize_from_binary, DEFVAL(Dictionary()));
 }
 
@@ -123,10 +128,7 @@ Variant NodeSerializer::serialize_to_json_structure(const Variant &p_value, cons
 }
 
 String NodeSerializer::serialize_to_json(const Variant &p_value, const String &p_indent, bool p_sort_keys, bool p_full_precision, const Dictionary &p_options) {
-	INSTRUMENT_FUNCTION_START("serialize_to_json");
-	String result = JSON::stringify(serialize_to_json_structure(p_value, p_options), p_indent, p_sort_keys, p_full_precision);
-	INSTRUMENT_FUNCTION_END();
-	return result;
+	return JSON::stringify(serialize_to_json_structure(p_value, p_options), p_indent, p_sort_keys, p_full_precision);
 }
 
 Variant NodeSerializer::deserialize_from_json_structure(const Variant &p_value, const Dictionary &p_options) {
@@ -140,35 +142,40 @@ Variant NodeSerializer::deserialize_from_json_structure(const Variant &p_value, 
 }
 
 Variant NodeSerializer::deserialize_from_json(const String &p_json_string, const Dictionary &p_options) {
-	INSTRUMENT_FUNCTION_START("deserialize_from_json");
 	Ref<JSON> json;
 	json.instantiate();
 	Error err = json->parse(p_json_string);
 	ERR_FAIL_COND_V_MSG(err != OK, Variant(), "Failed to parse JSON string: " + json->get_error_message());
 	Variant result = deserialize_from_json_structure(json->get_data(), p_options);
+	return result;
+}
+
+Variant NodeSerializer::serialize_to_binary_structure(const Variant &p_value, const Dictionary &p_options) {
+	INSTRUMENT_FUNCTION_START("serialize_to_binary_structure");
+	SerializationContext context;
+	context.serialize_value = &_serialize_recursively;
+	_apply_serialization_context_options(context, p_options);
+	Variant result = _serialize_recursively(p_value, context);
 	INSTRUMENT_FUNCTION_END();
 	return result;
 }
 
 PackedByteArray NodeSerializer::serialize_to_binary(const Variant &p_value, const Dictionary &p_options) {
-	INSTRUMENT_FUNCTION_START("serialize_to_binary");
-	SerializationContext context;
-	context.serialize_value = &_serialize_recursively;
-	_apply_serialization_context_options(context, p_options);
-	PackedByteArray result = UtilityFunctions::var_to_bytes(_serialize_recursively(p_value, context));
+	return UtilityFunctions::var_to_bytes(serialize_to_binary_structure(p_value, p_options));
+}
+
+Variant NodeSerializer::deserialize_from_binary_structure(const Variant &p_value, const Dictionary &p_options) {
+	INSTRUMENT_FUNCTION_START("deserialize_from_binary_structure");
+	DeserializationContext context;
+	context.deserialize_value = &_deserialize_recursively;
+	_apply_deserialization_context_options(context, p_options);
+	Variant result = context.deserialize_value(p_value, context);
 	INSTRUMENT_FUNCTION_END();
 	return result;
 }
 
 Variant NodeSerializer::deserialize_from_binary(const PackedByteArray &p_bytes, const Dictionary &p_options) {
-	INSTRUMENT_FUNCTION_START("deserialize_from_binary");
-	DeserializationContext context;
-	context.deserialize_value = &_deserialize_recursively;
-	_apply_deserialization_context_options(context, p_options);
-	Variant raw_value = UtilityFunctions::bytes_to_var(p_bytes);
-	Variant result = context.deserialize_value(raw_value, context);
-	INSTRUMENT_FUNCTION_END();
-	return result;
+	return deserialize_from_binary_structure(UtilityFunctions::bytes_to_var(p_bytes), p_options);
 }
 
 String NodeSerializer::_get_object_registration_name(Object *p_object) {
@@ -213,8 +220,9 @@ Variant NodeSerializer::_serialize_recursively(const Variant &p_value, Serializa
 	if (p_value.get_type() == Variant::ARRAY) {
 		Array arr = p_value;
 		Array new_arr;
-		new_arr.resize(arr.size());
-		for (int i = 0; i < arr.size(); ++i) {
+		int64_t size = arr.size();
+		new_arr.resize(size);
+		for (int i = 0; i < size; ++i) {
 			new_arr[i] = p_context.serialize_value(arr[i], p_context);
 		}
 		return new_arr;
@@ -223,8 +231,7 @@ Variant NodeSerializer::_serialize_recursively(const Variant &p_value, Serializa
 	if (p_value.get_type() == Variant::DICTIONARY) {
 		Dictionary dict = p_value;
 		Dictionary new_dict;
-		Array keys = dict.keys();
-		for (const auto &key : keys) {
+		for (const auto &key : dict.keys()) {
 			new_dict[key] = p_context.serialize_value(dict[key], p_context);
 		}
 		return new_dict;
@@ -351,7 +358,8 @@ Variant NodeSerializer::_json_serialize_value(const Variant &p_value, Serializat
 		default: {
 			Dictionary native_representation;
 			native_representation[*FIELD_TYPE] = *TYPE_NAME_NATIVE;
-			native_representation[*FIELD_DATA] = JSON::from_native(serialized_value);
+            native_representation[*FIELD_DATA] = Marshalls::get_singleton()->variant_to_base64(serialized_value, false);
+//			native_representation[*FIELD_DATA] = JSON::from_native(serialized_value);
 			INSTRUMENT_FUNCTION_END();
 			return native_representation;
 		}
@@ -380,6 +388,7 @@ Variant NodeSerializer::_json_deserialize_value(const Variant &p_value, Deserial
 
 Dictionary NodeSerializer::_serialize_children(Node *p_node, SerializationContext &p_context) {
 	Dictionary serialized_children;
+
 	for (int i = 0; i < p_node->get_child_count(); ++i) {
 		Node *child = p_node->get_child(i);
 		String child_name = child->get_name();
@@ -387,16 +396,18 @@ Dictionary NodeSerializer::_serialize_children(Node *p_node, SerializationContex
 		String registration_name = _get_object_registration_name(child);
 		ObjectRegistration *registration = _get_serializable_registration(registration_name);
 
-		SerializationContext child_context = p_context;
-		child_context.target_object = child;
+		Object *previous_target_object = p_context.target_object;
+		p_context.target_object = child;
 
 		if (registration) {
-			Dictionary serialized_child = registration->serialize(child, child_context);
+			Dictionary serialized_child = registration->serialize(child, p_context);
+
 			if (!serialized_child.is_empty()) {
 				serialized_children[child_name] = serialized_child;
 			}
 		} else {
-			Dictionary grandchildren = _serialize_children(child, child_context);
+			Dictionary grandchildren = _serialize_children(child, p_context);
+
 			if (!grandchildren.is_empty()) {
 				Dictionary unserializable_child_data;
 				unserializable_child_data[*FIELD_TYPE] = *TYPE_UNSERIALIZABLE_CHILD;
@@ -404,6 +415,8 @@ Dictionary NodeSerializer::_serialize_children(Node *p_node, SerializationContex
 				serialized_children[child_name] = unserializable_child_data;
 			}
 		}
+
+		p_context.target_object = previous_target_object;
 	}
 	return serialized_children;
 }
@@ -460,26 +473,39 @@ Dictionary NodeSerializer::ObjectRegistration::serialize(Object *p_object, Seria
 	p_context.property_name = StringName();
 
 	Node *node = Object::cast_to<Node>(p_object);
+
 	if (node) {
 		String scene_path = node->get_scene_file_path();
+
 		if (!scene_path.is_empty()) {
 			p_context.scene_root_node = node;
 		}
 	}
 
-	if (p_object->has_method("_serialize")) {
-		Variant result = p_object->call("_serialize");
-		if (result.get_type() == Variant::DICTIONARY) {
-			Dictionary serialized = result;
-			if (!serialized.has(*FIELD_TYPE)) {
-				serialized[*FIELD_TYPE] = this->name;
-			}
-			p_context.property_name = previous_property_name;
-			return serialized;
+	if (unlikely(has_custom_serializer != HasMethod::No)) {
+		if (unlikely(has_custom_serializer == HasMethod::Unchecked)) {
+			has_custom_serializer = p_object->has_method(*METHOD_SERIALIZE) ? HasMethod::Yes : HasMethod::No;
 		}
-		p_context.property_name = previous_property_name;
-		return Dictionary();
+
+		if (has_custom_serializer == HasMethod::Yes) {
+			Variant serialized_value = p_object->call(*METHOD_SERIALIZE);
+
+			if (serialized_value.get_type() == Variant::DICTIONARY) {
+				Dictionary serialized_dict = serialized_value;
+
+				if (!serialized_dict.has(*FIELD_TYPE)) {
+					serialized_dict[*FIELD_TYPE] = this->name;
+				}
+
+				p_context.property_name = previous_property_name;
+				return serialized_dict;
+			}
+
+			p_context.property_name = previous_property_name;
+			return Dictionary();
+		}
 	}
+
 	p_context.property_name = previous_property_name;
 	return _default_serialize(p_object, p_context);
 }
@@ -492,15 +518,30 @@ const std::map<StringName, NodeSerializer::PropertyCacheData> &NodeSerializer::O
 	_cached_property_map.clear();
 	StringName class_name = p_object->get_class();
 	Array property_list = p_object->get_property_list();
-	for (int i = 0, count = property_list.size(); i < count; ++i) {
+
+	for (int64_t i = 0, count = property_list.size(); i < count; ++i) {
 		Dictionary property_info = property_list[i];
-		String property_name = property_info["name"];
+		StringName property_name = property_info["name"];
+
+		if (property_name == *PROPERTY_SCRIPT || property_name == *PROPERTY_RESOURCE_PATH) {
+			continue;
+		}
+
+		StringName custom_serializer_method = "_serialize_property_" + property_name;
+		bool has_custom_serializer = p_object->has_method(custom_serializer_method);
+
+		StringName custom_deserializer_method = "_deserialize_property_" + property_name;
+		bool has_custom_deserializer = p_object->has_method(custom_deserializer_method);
 
 		_cached_property_map[property_name] = {
 			.type = Variant::Type(int(property_info["type"])),
 			.name = property_name,
 			.usage = property_info["usage"],
 			.default_value = ClassDB::class_get_property_default_value(class_name, property_name),
+			.custom_serializer_name = has_custom_serializer ? custom_serializer_method : StringName(),
+			.has_custom_serializer = has_custom_serializer,
+			.custom_deserializer_name = has_custom_deserializer ? custom_deserializer_method : StringName(),
+			.has_custom_deserializer = has_custom_deserializer,
 		};
 	}
 	return _cached_property_map;
@@ -545,18 +586,15 @@ Object *NodeSerializer::ObjectRegistration::deserialize(const Dictionary &p_seri
 
 Dictionary NodeSerializer::ObjectRegistration::_default_serialize(Object *p_object, SerializationContext &p_context) const {
 	Dictionary result;
-	const auto &property_map = _get_property_map(p_object);
 	int required_property_usage_flags = p_context.required_property_usage_flags;
 
-	for (const auto &[property_name, property_info] : property_map) {
-		uint32_t usage = property_info.usage;
-
-		if (!(usage & required_property_usage_flags) || property_name == *PROPERTY_SCRIPT || property_name == *PROPERTY_RESOURCE_PATH) {
+	for (const auto &[property_name, property_info] : _get_property_map(p_object)) {
+		if (!(property_info.usage & required_property_usage_flags)) {
 			continue;
 		}
 
-		if (p_object->has_method("_serialize_property_" + String(property_name))) {
-			result[property_name] = p_object->call("_serialize_property_" + String(property_name));
+		if (property_info.has_custom_serializer) {
+			result[property_name] = p_object->call(property_info.custom_serializer_name);
 			continue;
 		}
 
@@ -568,8 +606,12 @@ Dictionary NodeSerializer::ObjectRegistration::_default_serialize(Object *p_obje
 
 		if (value.get_type() == Variant::OBJECT) {
 			Node *value_as_node = Object::cast_to<Node>(static_cast<Object *>(value));
-			if (value_as_node && p_context.scene_root_node) {
-				result[property_name] = p_context.scene_root_node->get_path_to(value_as_node);
+
+			if (value_as_node) {
+				if (p_context.scene_root_node) {
+					result[property_name] = p_context.scene_root_node->get_path_to(value_as_node);
+				}
+
 				continue;
 			}
 		}
@@ -584,10 +626,13 @@ Dictionary NodeSerializer::ObjectRegistration::_default_serialize(Object *p_obje
 
 	if (Node *node = Object::cast_to<Node>(p_object)) {
 		String scene_path = node->get_scene_file_path();
+
 		if (!scene_path.is_empty() && scene_path.begins_with("res://")) {
 			result[*FIELD_SCENE] = scene_path;
 		}
+
 		Dictionary children_data = _serialize_children(node, p_context);
+
 		if (!children_data.is_empty()) {
 			result[*FIELD_CHILDREN] = children_data;
 		}
@@ -609,16 +654,17 @@ Object *NodeSerializer::ObjectRegistration::_default_deserialize(const Dictionar
 
 		Variant value = p_serialized[key];
 
-		if (object->has_method("_deserialize_property_" + String(key))) {
-			object->call("_deserialize_property_" + String(key), value);
+		const auto &property_list = _get_property_map(object);
+		auto prop_info_it = property_list.find(key);
+
+		if (prop_info_it != property_list.end() && prop_info_it->second.has_custom_deserializer) {
+			object->call(prop_info_it->second.custom_deserializer_name, value);
 			continue;
 		}
 
 		Variant deserialized_value = p_context.deserialize_value(value, p_context);
 
-		const auto &property_list = _get_property_map(object);
 		bool is_object_prop = false;
-		auto prop_info_it = property_list.find(key);
 		if (prop_info_it != property_list.end()) {
 			if (prop_info_it->second.type == Variant::OBJECT) {
 				is_object_prop = true;

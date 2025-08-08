@@ -1,17 +1,16 @@
 #pragma once
 
-#include "godot_cpp/classes/script.hpp"
 #include <functional>
+#include <map>
+#include "godot_cpp/classes/script.hpp"
 #include <godot_cpp/classes/node.hpp>
 #include <godot_cpp/classes/object.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/templates/hash_map.hpp>
-#include <godot_cpp/variant/callable.hpp>
 #include <godot_cpp/variant/dictionary.hpp>
 #include <godot_cpp/variant/packed_byte_array.hpp>
 #include <godot_cpp/variant/string_name.hpp>
 #include <godot_cpp/variant/variant.hpp>
-#include <map>
 
 using namespace godot;
 
@@ -29,14 +28,14 @@ public:
 	static Variant deserialize_from_json_structure(const Variant &p_value, const Dictionary &p_options = Dictionary());
 	static Variant deserialize_from_json(const String &p_json_string, const Dictionary &p_options = Dictionary());
 
+	static Variant serialize_to_binary_structure(const Variant &p_value, const Dictionary &p_options = Dictionary());
 	static PackedByteArray serialize_to_binary(const Variant &p_value, const Dictionary &p_options = Dictionary());
+	static Variant deserialize_from_binary_structure(const Variant &p_value, const Dictionary &p_options = Dictionary());
 	static Variant deserialize_from_binary(const PackedByteArray &p_bytes, const Dictionary &p_options = Dictionary());
 
 private:
-	// --- Constructor made private to prevent instantiation ---
 	NodeSerializer() = default;
 
-	// --- Contexts now hold the recursive function pointers ---
 	struct SerializationContext {
 		std::function<Variant(const Variant &, SerializationContext &)> serialize_value;
 		Object *target_object = nullptr;
@@ -56,9 +55,19 @@ private:
 		StringName name;
 		uint32_t usage = PROPERTY_USAGE_DEFAULT;
 		Variant default_value;
+		StringName custom_serializer_name;
+		bool has_custom_serializer = false;
+		StringName custom_deserializer_name;
+		bool has_custom_deserializer = false;
 	};
 
 	class ObjectRegistration {
+	private:
+		enum class HasMethod : uint8_t {
+			Unchecked,
+			No,
+			Yes,
+		};
 	public:
 		String name;
 		Ref<Script> script;
@@ -69,13 +78,13 @@ private:
 
 	private:
 		mutable std::map<StringName, PropertyCacheData> _cached_property_map;
+		mutable HasMethod has_custom_serializer = HasMethod::Unchecked;
 
 		const std::map<StringName, PropertyCacheData> &_get_property_map(Object *p_object) const;
 		Dictionary _default_serialize(Object *p_object, SerializationContext &p_context) const;
 		Object *_default_deserialize(const Dictionary &p_serialized, DeserializationContext &p_context) const;
 	};
 
-	// --- Static Data ---
 	static StringName *FIELD_CHILDREN;
 	static StringName *FIELD_SCENE;
 	static StringName *FIELD_TYPE;
@@ -91,6 +100,7 @@ private:
 	static StringName *FIELD_VALUE_CLASS_NAME;
 	static StringName *PROPERTY_SCRIPT;
 	static StringName *PROPERTY_RESOURCE_PATH;
+	static StringName *METHOD_SERIALIZE;
 
 	static HashMap<String, ObjectRegistration *> _script_registry;
 

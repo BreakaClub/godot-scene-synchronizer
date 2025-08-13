@@ -27,6 +27,9 @@ StringName *NodeSerializer::FIELD_VALUE_CLASS_NAME = nullptr;
 StringName *NodeSerializer::PROPERTY_SCRIPT = nullptr;
 StringName *NodeSerializer::PROPERTY_RESOURCE_PATH = nullptr;
 StringName *NodeSerializer::METHOD_SERIALIZE = nullptr;
+StringName *NodeSerializer::PROPERTY_NAME = nullptr;
+StringName *NodeSerializer::REQUIRED_PROPERTY_USAGE_FLAGS = nullptr;
+StringName *NodeSerializer::SCENE_ROOT_NODE = nullptr;
 
 void NodeSerializer::initialize() {
 	FIELD_CHILDREN = new StringName("._children");
@@ -45,6 +48,9 @@ void NodeSerializer::initialize() {
 	PROPERTY_SCRIPT = new StringName("script");
 	PROPERTY_RESOURCE_PATH = new StringName("resource_path");
 	METHOD_SERIALIZE = new StringName("_serialize");
+	PROPERTY_NAME = new StringName("property_name");
+	REQUIRED_PROPERTY_USAGE_FLAGS = new StringName("required_property_usage_flags");
+	SCENE_ROOT_NODE = new StringName("scene_root_node");
 }
 
 void NodeSerializer::cleanup() {
@@ -64,6 +70,9 @@ void NodeSerializer::cleanup() {
 	delete PROPERTY_SCRIPT;
 	delete PROPERTY_RESOURCE_PATH;
 	delete METHOD_SERIALIZE;
+	delete PROPERTY_NAME;
+	delete REQUIRED_PROPERTY_USAGE_FLAGS;
+	delete SCENE_ROOT_NODE;
 
 	for (const KeyValue<String, ObjectRegistration *> &E : _script_registry) {
 		memdelete(E.value);
@@ -178,86 +187,68 @@ Variant NodeSerializer::deserialize_from_binary(const PackedByteArray &p_bytes, 
 	return deserialize_from_binary_structure(UtilityFunctions::bytes_to_var(p_bytes), p_options);
 }
 
-String NodeSerializer::_get_object_registration_name(Object *p_object) {
-	if (!p_object) {
-		return "";
-	}
-	Ref<Script> script = p_object->get_script();
-	if (script.is_valid() && !script->get_path().is_empty()) {
-		return script->get_path();
-	}
-	return p_object->get_class();
-}
-
-NodeSerializer::ObjectRegistration *NodeSerializer::_get_serializable_registration(const String &p_name) {
-	if (_script_registry.has(p_name)) {
-		return _script_registry[p_name];
-	}
-	return nullptr;
-}
-
 void NodeSerializer::_apply_serialization_context_options(SerializationContext &p_context, const Dictionary &p_options) {
-	if (p_options.has("property_name")) {
-		p_context.property_name = p_options["property_name"];
+	if (p_options.has(PROPERTY_NAME)) {
+		p_context.property_name = p_options[PROPERTY_NAME];
 	}
 
-	if (p_options.has("required_property_usage_flags")) {
-		p_context.required_property_usage_flags = p_options["required_property_usage_flags"];
+	if (p_options.has(REQUIRED_PROPERTY_USAGE_FLAGS)) {
+		p_context.required_property_usage_flags = p_options[REQUIRED_PROPERTY_USAGE_FLAGS];
 	}
 
-	if (p_options.has("scene_root_node")) {
-		p_context.scene_root_node = Object::cast_to<Node>(p_options["scene_root_node"]);
+	if (p_options.has(SCENE_ROOT_NODE)) {
+		p_context.scene_root_node = Object::cast_to<Node>(p_options[SCENE_ROOT_NODE]);
 	}
 }
 
 void NodeSerializer::_apply_deserialization_context_options(DeserializationContext &p_context, const Dictionary &p_options) {
-	if (p_options.has("scene_root_node")) {
-		p_context.scene_root_node = Object::cast_to<Node>(p_options["scene_root_node"]);
+	if (p_options.has(SCENE_ROOT_NODE)) {
+		p_context.scene_root_node = Object::cast_to<Node>(p_options[SCENE_ROOT_NODE]);
 	}
 }
 
 Variant NodeSerializer::_serialize_recursively(const Variant &p_value, SerializationContext &p_context) {
-	if (p_value.get_type() == Variant::ARRAY) {
-		Array arr = p_value;
-		Array new_arr;
-		int64_t size = arr.size();
-		new_arr.resize(size);
-		for (int i = 0; i < size; ++i) {
-			new_arr[i] = p_context.serialize_value(arr[i], p_context);
+	switch (p_value.get_type()) {
+		case Variant::ARRAY: {
+			Array arr = p_value;
+			Array new_arr;
+			int64_t size = arr.size();
+			new_arr.resize(size);
+			for (int i = 0; i < size; ++i) {
+				new_arr[i] = p_context.serialize_value(arr[i], p_context);
+			}
+			return new_arr;
 		}
-		return new_arr;
-	}
-
-	if (p_value.get_type() == Variant::DICTIONARY) {
-		Dictionary dict = p_value;
-		Dictionary new_dict;
-		for (const auto &key : dict.keys()) {
-			new_dict[key] = p_context.serialize_value(dict[key], p_context);
+		case Variant::DICTIONARY: {
+			Dictionary dict = p_value;
+			Dictionary new_dict;
+			for (const auto &key : dict.keys()) {
+				new_dict[key] = p_context.serialize_value(dict[key], p_context);
+			}
+			return new_dict;
 		}
-		return new_dict;
-	}
+		case Variant::OBJECT: {
+			Object *obj = p_value.get_validated_object();
+			if (obj) {
+				String reg_name = _get_object_registration_name(obj);
+				ObjectRegistration *registration = _get_serializable_registration(reg_name);
 
-	if (p_value.get_type() == Variant::OBJECT) {
-		Object *obj = p_value.get_validated_object();
-		if (obj) {
-			String reg_name = _get_object_registration_name(obj);
-			ObjectRegistration *registration = _get_serializable_registration(reg_name);
+				if (registration) {
+					return registration->serialize(obj, p_context);
+				}
 
-			if (registration) {
-				return registration->serialize(obj, p_context);
+				if (p_context.property_name.is_empty()) {
+					ERR_PRINT("Unregistered Object (" + reg_name + ") cannot be serialized. Register it first.");
+				} else {
+					ERR_PRINT("Unregistered Object (" + reg_name + ") cannot be serialized. Register it first. Property: " + p_context.property_name);
+				}
 			}
 
-			if (p_context.property_name.is_empty()) {
-				ERR_PRINT("Unregistered Object (" + reg_name + ") cannot be serialized. Register it first.");
-			} else {
-				ERR_PRINT("Unregistered Object (" + reg_name + ") cannot be serialized. Register it first. Property: " + p_context.property_name);
-			}
+			return {};
 		}
-
-		return Variant();
+		default:
+			return p_value;
 	}
-
-	return p_value;
 }
 
 Variant NodeSerializer::_deserialize_recursively(const Variant &p_value, DeserializationContext &p_context) {
@@ -389,15 +380,12 @@ Variant NodeSerializer::_json_deserialize_value(const Variant &p_value, Deserial
 Dictionary NodeSerializer::_serialize_children(Node *p_node, SerializationContext &p_context) {
 	Dictionary serialized_children;
 
-	for (int i = 0; i < p_node->get_child_count(); ++i) {
+	for (int i = 0, l = p_node->get_child_count(); i < l; ++i) {
 		Node *child = p_node->get_child(i);
-		String child_name = child->get_name();
+		StringName child_name = child->get_name();
 
 		String registration_name = _get_object_registration_name(child);
 		ObjectRegistration *registration = _get_serializable_registration(registration_name);
-
-		Object *previous_target_object = p_context.target_object;
-		p_context.target_object = child;
 
 		if (registration) {
 			Dictionary serialized_child = registration->serialize(child, p_context);
@@ -406,6 +394,9 @@ Dictionary NodeSerializer::_serialize_children(Node *p_node, SerializationContex
 				serialized_children[child_name] = serialized_child;
 			}
 		} else {
+			Object *previous_target_object = p_context.target_object;
+			p_context.target_object = child;
+
 			Dictionary grandchildren = _serialize_children(child, p_context);
 
 			if (!grandchildren.is_empty()) {
@@ -414,9 +405,9 @@ Dictionary NodeSerializer::_serialize_children(Node *p_node, SerializationContex
 				unserializable_child_data[*FIELD_CHILDREN] = grandchildren;
 				serialized_children[child_name] = unserializable_child_data;
 			}
-		}
 
-		p_context.target_object = previous_target_object;
+			p_context.target_object = previous_target_object;
+		}
 	}
 	return serialized_children;
 }
@@ -468,8 +459,10 @@ void NodeSerializer::_deserialize_children(Node *node, const Dictionary &p_seria
 }
 
 Dictionary NodeSerializer::ObjectRegistration::serialize(Object *p_object, SerializationContext &p_context) const {
-	p_context.target_object = p_object;
+	Object *previous_target_object = p_context.target_object;
 	StringName previous_property_name = p_context.property_name;
+
+	p_context.target_object = p_object;
 	p_context.property_name = StringName();
 
 	Node *node = Object::cast_to<Node>(p_object);
@@ -490,6 +483,9 @@ Dictionary NodeSerializer::ObjectRegistration::serialize(Object *p_object, Seria
 		if (has_custom_serializer == HasMethod::Yes) {
 			Variant serialized_value = p_object->call(*METHOD_SERIALIZE);
 
+			p_context.target_object = previous_target_object;
+			p_context.property_name = previous_property_name;
+
 			if (serialized_value.get_type() == Variant::DICTIONARY) {
 				Dictionary serialized_dict = serialized_value;
 
@@ -497,24 +493,22 @@ Dictionary NodeSerializer::ObjectRegistration::serialize(Object *p_object, Seria
 					serialized_dict[*FIELD_TYPE] = this->name;
 				}
 
-				p_context.property_name = previous_property_name;
 				return serialized_dict;
 			}
 
-			p_context.property_name = previous_property_name;
-			return Dictionary();
+			return {};
 		}
 	}
 
+	Dictionary serialized_value = _default_serialize(p_object, p_context);
+
+	p_context.target_object = previous_target_object;
 	p_context.property_name = previous_property_name;
-	return _default_serialize(p_object, p_context);
+
+	return serialized_value;
 }
 
-const std::map<StringName, NodeSerializer::PropertyCacheData> &NodeSerializer::ObjectRegistration::_get_property_map(Object *p_object) const {
-	if (!mutable_property_list && _cached_property_map.size() > 0) {
-		return _cached_property_map;
-	}
-
+const std::map<StringName, NodeSerializer::PropertyCacheData> &NodeSerializer::ObjectRegistration::_build_cached_property_map(Object *p_object) const {
 	_cached_property_map.clear();
 	StringName class_name = p_object->get_class();
 	Array property_list = p_object->get_property_list();
@@ -605,7 +599,7 @@ Dictionary NodeSerializer::ObjectRegistration::_default_serialize(Object *p_obje
 		}
 
 		if (value.get_type() == Variant::OBJECT) {
-			Node *value_as_node = Object::cast_to<Node>(static_cast<Object *>(value));
+			Node *value_as_node = Object::cast_to<Node>(value);
 
 			if (value_as_node) {
 				if (p_context.scene_root_node) {
@@ -627,7 +621,7 @@ Dictionary NodeSerializer::ObjectRegistration::_default_serialize(Object *p_obje
 	if (Node *node = Object::cast_to<Node>(p_object)) {
 		String scene_path = node->get_scene_file_path();
 
-		if (!scene_path.is_empty() && scene_path.begins_with("res://")) {
+		if (scene_path.begins_with("res://")) {
 			result[*FIELD_SCENE] = scene_path;
 		}
 
@@ -664,14 +658,7 @@ Object *NodeSerializer::ObjectRegistration::_default_deserialize(const Dictionar
 
 		Variant deserialized_value = p_context.deserialize_value(value, p_context);
 
-		bool is_object_prop = false;
-		if (prop_info_it != property_list.end()) {
-			if (prop_info_it->second.type == Variant::OBJECT) {
-				is_object_prop = true;
-			}
-		}
-
-		if (deserialized_value.get_type() == Variant::STRING && is_object_prop) {
+		if (deserialized_value.get_type() == Variant::STRING && prop_info_it != property_list.end() && prop_info_it->second.type == Variant::OBJECT) {
 			String path = deserialized_value;
 			Node *scene_root_node = p_context.scene_root_node;
 

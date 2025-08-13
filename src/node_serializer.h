@@ -80,7 +80,15 @@ private:
 		mutable std::map<StringName, PropertyCacheData> _cached_property_map;
 		mutable HasMethod has_custom_serializer = HasMethod::Unchecked;
 
-		const std::map<StringName, PropertyCacheData> &_get_property_map(Object *p_object) const;
+		_ALWAYS_INLINE_ const std::map<StringName, PropertyCacheData> &_get_property_map(Object *p_object) const {
+			if (!mutable_property_list && !_cached_property_map.empty()) {
+				return _cached_property_map;
+			}
+
+			return _build_cached_property_map(p_object);
+		}
+
+		const std::map<StringName, PropertyCacheData> &_build_cached_property_map(Object *p_object) const;
 		Dictionary _default_serialize(Object *p_object, SerializationContext &p_context) const;
 		Object *_default_deserialize(const Dictionary &p_serialized, DeserializationContext &p_context) const;
 	};
@@ -101,6 +109,9 @@ private:
 	static StringName *PROPERTY_SCRIPT;
 	static StringName *PROPERTY_RESOURCE_PATH;
 	static StringName *METHOD_SERIALIZE;
+	static StringName *PROPERTY_NAME;
+	static StringName *REQUIRED_PROPERTY_USAGE_FLAGS;
+	static StringName *SCENE_ROOT_NODE;
 
 	static HashMap<String, ObjectRegistration *> _script_registry;
 
@@ -113,8 +124,24 @@ private:
 	static Variant _json_serialize_value(const Variant &p_value, SerializationContext &p_context);
 	static Variant _json_deserialize_value(const Variant &p_value, DeserializationContext &p_context);
 
-	static String _get_object_registration_name(Object *p_object);
-	static ObjectRegistration *_get_serializable_registration(const String &p_name);
+	_ALWAYS_INLINE_ static String _get_object_registration_name(Object *p_object) {
+		if (!p_object) {
+			return "";
+		}
+		Ref<Script> script = p_object->get_script();
+		if (script.is_valid() && !script->get_path().is_empty()) {
+			return script->get_path();
+		}
+		return p_object->get_class();
+	}
+
+	_ALWAYS_INLINE_ static ObjectRegistration *_get_serializable_registration(const String &p_name) {
+		if (auto it = _script_registry.find(p_name)) {
+			return it->value;
+		}
+		return nullptr;
+	}
+
 	static Dictionary _serialize_children(Node *p_node, SerializationContext &p_context);
 	static void _deserialize_children(Node *node, const Dictionary &p_serialized_children, DeserializationContext &p_context);
 

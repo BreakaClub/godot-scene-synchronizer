@@ -178,7 +178,7 @@ Variant NodeSerializer::deserialize_from_binary_structure(const Variant &p_value
 	DeserializationContext context;
 	context.deserialize_value = &_deserialize_recursively;
 	_apply_deserialization_context_options(context, p_options);
-	Variant result = context.deserialize_value(p_value, context);
+	Variant result = _deserialize_recursively(p_value, context);
 	INSTRUMENT_FUNCTION_END();
 	return result;
 }
@@ -188,22 +188,23 @@ Variant NodeSerializer::deserialize_from_binary(const PackedByteArray &p_bytes, 
 }
 
 void NodeSerializer::_apply_serialization_context_options(SerializationContext &p_context, const Dictionary &p_options) {
-	if (p_options.has(PROPERTY_NAME)) {
-		p_context.property_name = p_options[PROPERTY_NAME];
+	if (p_options.has(*PROPERTY_NAME)) {
+		p_context.property_name = p_options[*PROPERTY_NAME];
 	}
 
-	if (p_options.has(REQUIRED_PROPERTY_USAGE_FLAGS)) {
-		p_context.required_property_usage_flags = p_options[REQUIRED_PROPERTY_USAGE_FLAGS];
+	if (p_options.has(*REQUIRED_PROPERTY_USAGE_FLAGS)) {
+		p_context.required_property_usage_flags = p_options[*REQUIRED_PROPERTY_USAGE_FLAGS];
 	}
 
-	if (p_options.has(SCENE_ROOT_NODE)) {
-		p_context.scene_root_node = Object::cast_to<Node>(p_options[SCENE_ROOT_NODE]);
+	if (p_options.has(*SCENE_ROOT_NODE)) {
+		p_context.scene_root_node = Object::cast_to<Node>(p_options[*SCENE_ROOT_NODE]);
 	}
 }
 
 void NodeSerializer::_apply_deserialization_context_options(DeserializationContext &p_context, const Dictionary &p_options) {
-	if (p_options.has(SCENE_ROOT_NODE)) {
-		p_context.scene_root_node = Object::cast_to<Node>(p_options[SCENE_ROOT_NODE]);
+	if (p_options.has(*SCENE_ROOT_NODE)) {
+		p_context.scene_root_node = Object::cast_to<Node>(p_options[*SCENE_ROOT_NODE]);
+		p_context.target_object = p_context.scene_root_node;
 	}
 }
 
@@ -550,9 +551,11 @@ Object *NodeSerializer::ObjectRegistration::deserialize(const Dictionary &p_seri
 			Ref<PackedScene> packed_scene = ResourceLoader::get_singleton()->load(scene_path);
 			if (packed_scene.is_valid()) {
 				object = packed_scene->instantiate();
+				p_context.target_object = object;
 			}
 		} else if (this->script.is_valid()) {
 			object = script->call("new");
+			p_context.target_object = object;
 		}
 	}
 
@@ -563,7 +566,6 @@ Object *NodeSerializer::ObjectRegistration::deserialize(const Dictionary &p_seri
 		ERR_PRINT("Deserialization target object does not have the correct script attached. Expected: " + this->script->get_path());
 	}
 
-	p_context.target_object = object;
 	if (Node *node = Object::cast_to<Node>(object)) {
 		if (node->get_scene_file_path() != "") {
 			p_context.scene_root_node = node;
@@ -658,7 +660,7 @@ Object *NodeSerializer::ObjectRegistration::_default_deserialize(const Dictionar
 
 		Variant deserialized_value = p_context.deserialize_value(value, p_context);
 
-		if (deserialized_value.get_type() == Variant::STRING && prop_info_it != property_list.end() && prop_info_it->second.type == Variant::OBJECT) {
+		if (deserialized_value.get_type() == Variant::NODE_PATH && prop_info_it != property_list.end() && prop_info_it->second.type == Variant::OBJECT) {
 			String path = deserialized_value;
 			Node *scene_root_node = p_context.scene_root_node;
 

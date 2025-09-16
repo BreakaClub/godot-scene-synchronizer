@@ -9,7 +9,8 @@
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
 
-HashMap<String, NodeSerializer::ObjectRegistration *> NodeSerializer::_script_registry;
+HashSet<String> NodeSerializer::_class_db_classes;
+HashMap<String, NodeSerializer::ObjectRegistration *> NodeSerializer::_object_registry;
 
 StringName *NodeSerializer::FIELD_CHILDREN = nullptr;
 StringName *NodeSerializer::FIELD_SCENE = nullptr;
@@ -74,14 +75,14 @@ void NodeSerializer::cleanup() {
 	delete REQUIRED_PROPERTY_USAGE_FLAGS;
 	delete SCENE_ROOT_NODE;
 
-	for (const KeyValue<String, ObjectRegistration *> &E : _script_registry) {
+	for (const KeyValue<String, ObjectRegistration *> &E : _object_registry) {
 		memdelete(E.value);
 	}
-	_script_registry.clear();
+	_object_registry.clear();
 }
 
 void NodeSerializer::_bind_methods() {
-	ClassDB::bind_static_method("NodeSerializer", D_METHOD("register_serializable_class", "script_or_path", "mutable_property_list"), &NodeSerializer::register_serializable_class, DEFVAL(false));
+	ClassDB::bind_static_method("NodeSerializer", D_METHOD("register_serializable_class", "name_path_or_script", "mutable_property_list"), &NodeSerializer::register_serializable_class, DEFVAL(false));
 	ClassDB::bind_static_method("NodeSerializer", D_METHOD("serialize_to_json_structure", "value", "options"), &NodeSerializer::serialize_to_json_structure, DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("NodeSerializer", D_METHOD("serialize_to_json", "value", "indent", "sort_keys", "full_precision", "options"), &NodeSerializer::serialize_to_json, DEFVAL(""), DEFVAL(false), DEFVAL(false), DEFVAL(Dictionary()));
 	ClassDB::bind_static_method("NodeSerializer", D_METHOD("deserialize_from_json_structure", "json_string", "options"), &NodeSerializer::deserialize_from_json_structure, DEFVAL(Dictionary()));
@@ -92,38 +93,65 @@ void NodeSerializer::_bind_methods() {
 	ClassDB::bind_static_method("NodeSerializer", D_METHOD("deserialize_from_binary", "bytes", "options"), &NodeSerializer::deserialize_from_binary, DEFVAL(Dictionary()));
 }
 
-void NodeSerializer::register_serializable_class(const Variant &p_script_or_path, bool p_mutable_property_list) {
+void NodeSerializer::register_serializable_class(const Variant &p_name_path_or_script, bool p_mutable_property_list) {
 	Ref<Script> script;
-	String path;
+	String registration_name;
 
-	if (p_script_or_path.get_type() == Variant::STRING) {
-		path = p_script_or_path;
+	if (p_name_path_or_script.get_type() == Variant::STRING) {
+		String reference = p_name_path_or_script;
+
+		if (reference.begins_with("res://")) {
+			registration_name = reference;
+			script = ResourceLoader::get_singleton()->load(registration_name);
+
+			ERR_FAIL_COND_V_MSG(!script.is_valid(), void(), "Failed to load script for serialization: " + registration_name);
+		} else {
+			//
+			if (_class_db_classes.size() == 0) {
+				PackedStringArray class_list = ClassDB::get_class_list();
+
+				for (auto &it : class_list) {
+					_class_db_classes.insert(it);
+				}
+			}
+
+			if (_class_db_classes.has(reference)) {
+				registration_name = reference;
+			}
+
+			ERR_FAIL_COND_V_MSG(registration_name.is_empty(), void(), "Invalid global class name: " + registration_name);
+		}
+
+		ERR_FAIL_COND_MSG(registration_name.is_empty(), "Serializable class name/path cannot be empty.");
 	} else {
-		script = p_script_or_path;
+		script = p_name_path_or_script;
 
 		if (script.is_valid()) {
-			path = script->get_path();
+			registration_name = script->get_path();
+		} else {
+			ERR_FAIL_COND_MSG(registration_name.is_empty(), "Provided Script reference is not valid.");
 		}
 	}
 
-	ERR_FAIL_COND_MSG(path.is_empty(), "Serializable class name/path cannot be empty.");
+	ObjectRegistration *previous_registration = _object_registry.has(registration_name)
+			? _object_registry[registration_name]
+			: nullptr;
 
-	if (!script.is_valid() && path.begins_with("res://")) {
-		script = ResourceLoader::get_singleton()->load(path);
+	if (previous_registration) {
+		WARN_PRINT("Overwriting existing serializable class registration for: " + registration_name);
 	}
 
-	ERR_FAIL_COND_V_MSG(!script.is_valid(), void(), "Failed to load script for serialization: " + path);
+	ObjectRegistration *registration = memnew(ObjectRegistration);
+	registration->name = registration_name;
+	registration->script = script;
+	registration->mutable_property_list = p_mutable_property_list;
 
-	if (_script_registry.has(path)) {
-		WARN_PRINT("Overwriting existing serializable class registration for: " + path);
-		memdelete(_script_registry[path]);
+	_object_registry[registration_name] = registration;
+
+	if (previous_registration) {
+		WARN_PRINT("Overwriting existing serializable class registration for: " + registration_name);
+		memdelete(previous_registration);
 	}
-
-	ObjectRegistration *reg = memnew(ObjectRegistration);
-	reg->name = path;
-	reg->script = script;
-	reg->mutable_property_list = p_mutable_property_list;
-	_script_registry[path] = reg;
 }
 
 Variant NodeSerializer::serialize_to_json_structure(const Variant &p_value, const Dictionary &p_options) {
@@ -350,8 +378,8 @@ Variant NodeSerializer::_json_serialize_value(const Variant &p_value, Serializat
 		default: {
 			Dictionary native_representation;
 			native_representation[*FIELD_TYPE] = *TYPE_NAME_NATIVE;
-            native_representation[*FIELD_DATA] = Marshalls::get_singleton()->variant_to_base64(serialized_value, false);
-//			native_representation[*FIELD_DATA] = JSON::from_native(serialized_value);
+			native_representation[*FIELD_DATA] = Marshalls::get_singleton()->variant_to_base64(serialized_value, false);
+			//			native_representation[*FIELD_DATA] = JSON::from_native(serialized_value);
 			INSTRUMENT_FUNCTION_END();
 			return native_representation;
 		}
@@ -551,19 +579,22 @@ Object *NodeSerializer::ObjectRegistration::deserialize(const Dictionary &p_seri
 			Ref<PackedScene> packed_scene = ResourceLoader::get_singleton()->load(scene_path);
 			if (packed_scene.is_valid()) {
 				object = packed_scene->instantiate();
-				p_context.target_object = object;
 			}
+		} else if (this->script.is_null()) {
+			object = ClassDB::instantiate(this->name);
 		} else if (this->script.is_valid()) {
 			object = script->call("new");
-			p_context.target_object = object;
 		}
 	}
 
 	ERR_FAIL_COND_V_MSG(!object, nullptr, "Failed to create or find object for deserialization of type: " + this->name);
 
+	p_context.target_object = object;
+
 	Ref<Script> instantiated_script = object->get_script();
-	if (instantiated_script.is_null() || instantiated_script->get_path() != this->script->get_path()) {
-		ERR_PRINT("Deserialization target object does not have the correct script attached. Expected: " + this->script->get_path());
+
+	if (!this->script.is_null() != instantiated_script.is_null() || instantiated_script->get_path() != this->script->get_path()) {
+		ERR_PRINT("Deserialization target object does not have the correct script attached. Expected: " + (this->script.is_null() ? "null" : this->script->get_path()));
 	}
 
 	if (Node *node = Object::cast_to<Node>(object)) {

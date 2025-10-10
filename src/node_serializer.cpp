@@ -593,8 +593,8 @@ Object *NodeSerializer::ObjectRegistration::deserialize(const Dictionary &p_seri
 
 	Ref<Script> instantiated_script = object->get_script();
 
-	if (!this->script.is_null() != instantiated_script.is_null() || instantiated_script->get_path() != this->script->get_path()) {
-		ERR_PRINT("Deserialization target object does not have the correct script attached. Expected: " + (this->script.is_null() ? "null" : this->script->get_path()));
+	if (this->script.is_null() != instantiated_script.is_null() || instantiated_script->get_path() != this->script->get_path()) {
+		ERR_PRINT("Deserialization target object does not have the correct script attached: " + (instantiated_script.is_null() ? "null" : instantiated_script->get_path()) + ". Expected: " + (this->script.is_null() ? "null" : this->script->get_path()));
 	}
 
 	if (Node *node = Object::cast_to<Node>(object)) {

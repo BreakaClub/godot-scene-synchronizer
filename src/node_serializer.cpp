@@ -8,6 +8,7 @@
 #include <godot_cpp/classes/script.hpp>
 #include <godot_cpp/core/class_db.hpp>
 #include <godot_cpp/variant/utility_functions.hpp>
+#include <unordered_set>
 
 HashSet<String> NodeSerializer::_class_db_classes;
 HashMap<String, NodeSerializer::ObjectRegistration *> NodeSerializer::_object_registry;
@@ -31,6 +32,47 @@ StringName *NodeSerializer::METHOD_SERIALIZE = nullptr;
 StringName *NodeSerializer::PROPERTY_NAME = nullptr;
 StringName *NodeSerializer::REQUIRED_PROPERTY_USAGE_FLAGS = nullptr;
 StringName *NodeSerializer::SCENE_ROOT_NODE = nullptr;
+
+static String _describe_node_for_path_diagnostics(const Node *p_node) {
+	if (!p_node) {
+		return "<null>";
+	}
+
+	const String node_class = p_node->get_class();
+	const String node_name = p_node->get_name();
+	const String node_path = p_node->is_inside_tree()
+			? String(p_node->get_path())
+			: String("<out_of_tree>/") + node_name;
+	const Node *owner = p_node->get_owner();
+	const String owner_path = owner
+			? (owner->is_inside_tree() ? String(owner->get_path()) : String("<out_of_tree>/") + owner->get_name())
+			: String("<null>");
+
+	return String("{class=") + node_class + ", name=" + node_name + ", path=" + node_path + ", owner=" + owner_path + "}";
+}
+
+static bool _nodes_share_common_ancestor(const Node *p_source, const Node *p_target) {
+	if (!p_source || !p_target) {
+		return false;
+	}
+
+	std::unordered_set<const Node *> source_ancestors;
+	const Node *source_cursor = p_source;
+	while (source_cursor) {
+		source_ancestors.insert(source_cursor);
+		source_cursor = source_cursor->get_parent();
+	}
+
+	const Node *target_cursor = p_target;
+	while (target_cursor) {
+		if (source_ancestors.find(target_cursor) != source_ancestors.end()) {
+			return true;
+		}
+		target_cursor = target_cursor->get_parent();
+	}
+
+	return false;
+}
 
 void NodeSerializer::initialize() {
 	FIELD_CHILDREN = new StringName("._children");
@@ -636,7 +678,21 @@ Dictionary NodeSerializer::ObjectRegistration::_default_serialize(Object *p_obje
 
 			if (value_as_node) {
 				if (p_context.scene_root_node) {
-					result[property_name] = p_context.scene_root_node->get_path_to(value_as_node);
+					Node *scene_root = p_context.scene_root_node;
+
+					if (!_nodes_share_common_ancestor(scene_root, value_as_node)) {
+						Node *serialized_object_as_node = Object::cast_to<Node>(p_object);
+						UtilityFunctions::printerr(
+								"[NodeSerializer] Unable to serialize node reference path: no common parent.",
+								" serialized_type=", this->name,
+								" serialized_property=", String(property_name),
+								" scene_root=", _describe_node_for_path_diagnostics(scene_root),
+								" property_node=", _describe_node_for_path_diagnostics(value_as_node),
+								" serialized_object=", _describe_node_for_path_diagnostics(serialized_object_as_node));
+						result[property_name] = NodePath();
+					} else {
+						result[property_name] = scene_root->get_path_to(value_as_node);
+					}
 				}
 
 				continue;
@@ -672,6 +728,7 @@ Object *NodeSerializer::ObjectRegistration::_default_deserialize(const Dictionar
 	Object *object = p_context.target_object;
 	ERR_FAIL_COND_V(!object, nullptr);
 
+	Dictionary deferred_node_path_properties;
 	Array keys = p_serialized.keys();
 	for (int i = 0; i < keys.size(); ++i) {
 		StringName key = keys[i];
@@ -703,7 +760,7 @@ Object *NodeSerializer::ObjectRegistration::_default_deserialize(const Dictionar
 			auto node = scene_root_node->get_node_or_null(path);
 
 			if (!node) {
-				ERR_PRINT("Failed to resolve object for node path property " + name + ":" + key + ": " + path);
+				deferred_node_path_properties[key] = deserialized_value;
 				continue;
 			}
 
@@ -716,6 +773,23 @@ Object *NodeSerializer::ObjectRegistration::_default_deserialize(const Dictionar
 	if (Node *node = Object::cast_to<Node>(object)) {
 		if (p_serialized.has(*FIELD_CHILDREN)) {
 			_deserialize_children(node, p_serialized[*FIELD_CHILDREN], p_context);
+		}
+	}
+
+	if (!deferred_node_path_properties.is_empty()) {
+		Node *scene_root_node = p_context.scene_root_node;
+		Array deferred_keys = deferred_node_path_properties.keys();
+		for (int i = 0; i < deferred_keys.size(); ++i) {
+			StringName key = deferred_keys[i];
+			NodePath path = deferred_node_path_properties[key];
+			auto node = scene_root_node->get_node_or_null(path);
+
+			if (!node) {
+				ERR_PRINT("Failed to resolve object for node path property " + name + ":" + key + ": " + String(path));
+				continue;
+			}
+
+			object->set(key, node);
 		}
 	}
 
